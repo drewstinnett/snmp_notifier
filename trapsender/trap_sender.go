@@ -15,13 +15,12 @@ package trapsender
 
 import (
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/maxwo/snmp_notifier/commons"
 	"github.com/maxwo/snmp_notifier/telemetry"
 	"github.com/maxwo/snmp_notifier/types"
-
-	"text/template"
 
 	"github.com/k-sone/snmpgo"
 	"github.com/shirou/gopsutil/host"
@@ -53,6 +52,7 @@ type Configuration struct {
 	SNMPContextName            string
 
 	DescriptionTemplate template.Template
+	SkipBaseBinds       bool
 	ExtraFieldTemplates map[string]template.Template
 }
 
@@ -84,9 +84,7 @@ func (trapSender TrapSender) SendAlertTraps(alertBucket types.AlertBucket) error
 }
 
 func (trapSender TrapSender) generateTraps(alertBucket types.AlertBucket) ([]snmpgo.VarBinds, error) {
-	var (
-		traps []snmpgo.VarBinds
-	)
+	var traps []snmpgo.VarBinds
 	for _, alertGroup := range alertBucket.AlertGroups {
 		varBinds, err := trapSender.generateVarBinds(*alertGroup)
 		if err != nil {
@@ -99,9 +97,7 @@ func (trapSender TrapSender) generateTraps(alertBucket types.AlertBucket) ([]snm
 }
 
 func (trapSender TrapSender) generateVarBinds(alertGroup types.AlertGroup) (snmpgo.VarBinds, error) {
-	var (
-		varBinds snmpgo.VarBinds
-	)
+	var varBinds snmpgo.VarBinds
 
 	trapUniqueID := strings.Join([]string{alertGroup.OID, "[", alertGroup.GroupID, "]"}, "")
 
@@ -113,9 +109,13 @@ func (trapSender TrapSender) generateVarBinds(alertGroup types.AlertGroup) (snmp
 	trapOid, _ := snmpgo.NewOid(alertGroup.OID)
 	varBinds = addUpTime(varBinds)
 	varBinds = append(varBinds, snmpgo.NewVarBind(snmpgo.OidSnmpTrap, trapOid))
-	varBinds = addStringSubOid(varBinds, alertGroup.OID, "1", trapUniqueID)
-	varBinds = addStringSubOid(varBinds, alertGroup.OID, "2", alertGroup.Severity)
-	varBinds = addStringSubOid(varBinds, alertGroup.OID, "3", *description)
+	// Note: Some people need to override these with something from the
+	// extra fields map or elsewhere
+	if !trapSender.configuration.SkipBaseBinds {
+		varBinds = addStringSubOid(varBinds, alertGroup.OID, "1", trapUniqueID)
+		varBinds = addStringSubOid(varBinds, alertGroup.OID, "2", alertGroup.Severity)
+		varBinds = addStringSubOid(varBinds, alertGroup.OID, "3", *description)
+	}
 	for subOid, template := range trapSender.configuration.ExtraFieldTemplates {
 		value, err := commons.FillTemplate(alertGroup, template)
 		if err != nil {
