@@ -89,9 +89,11 @@ func ParseConfiguration(args []string) (*SNMPNotifierConfiguration, log.Logger, 
 	extraFieldTemplates := make(map[string]template.Template)
 	if snmpExtraFieldTemplate != nil {
 		for k, v := range *snmpExtraFieldTemplate {
-			i, err := strconv.Atoi(k)
-			if err != nil || i < 4 {
-				return nil, logger, fmt.Errorf("Invalid field ID: %s. Field ID must be a number superior to 3", k)
+			if !*snmpTrapSkipBaseBinds {
+				i, err := strconv.Atoi(k)
+				if err != nil || i < 4 {
+					return nil, logger, fmt.Errorf("Invalid field ID: %s. Field ID must be a number superior to 3", k)
+				}
 			}
 			currentTemplate, err := template.New(filepath.Base(v)).Funcs(template.FuncMap{
 				"groupAlertsByLabel": commons.GroupAlertsByLabel,
