@@ -1,12 +1,13 @@
 {{- if .Alerts -}}
-{{- range $severity, $alerts := (groupAlertsByLabel .Alerts "severity") -}}
-Status: {{ $severity }}
-{{- range $index, $alert := $alerts }}
-- Alert: {{ $alert.Labels.alertname }}
-  Summary: {{ $alert.Annotations.summary }}
-  Description: {{ $alert.Annotations.description }}
-{{ end }}
-{{ end }}
+	{{- range $severity, $alerts := (groupAlertsByLabel .Alerts "severity") -}}
+		{{- range $index, $alert := $alerts }}
+  			{{ $alert.Annotations.description }}
+		{{ end }}
+	{{ end }}
 {{ else -}}
-Status: OK
+        {{- range $severity, $alerts := (groupAlertsByLabel .Alerts "severity") -}}
+                {{- range $index, $alert := $alerts }}
+                        {{ $alert.Annotations.description }}
+                {{ end }}
+        {{ end }}
 {{- end -}}

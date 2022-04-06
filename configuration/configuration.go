@@ -2,19 +2,19 @@ package configuration
 
 import (
 	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"text/template"
+
 	"github.com/go-kit/log"
 	"github.com/prometheus/common/promlog"
 	promlogflag "github.com/prometheus/common/promlog/flag"
-	"path/filepath"
-	"strings"
-	"text/template"
 
 	"github.com/maxwo/snmp_notifier/alertparser"
 	"github.com/maxwo/snmp_notifier/commons"
 	"github.com/maxwo/snmp_notifier/httpserver"
 	"github.com/maxwo/snmp_notifier/trapsender"
-
-	"strconv"
 
 	"github.com/prometheus/common/version"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
@@ -49,6 +49,7 @@ func ParseConfiguration(args []string) (*SNMPNotifierConfiguration, log.Logger, 
 		snmpTrapOidLabel            = application.Flag("snmp.trap-oid-label", "Label where to find the trap OID.").Default("oid").String()
 		snmpDefaultOid              = application.Flag("snmp.trap-default-oid", "Trap OID to send if none is found in the alert labels.").Default("1.3.6.1.4.1.98789.0.1").String()
 		snmpTrapDescriptionTemplate = application.Flag("snmp.trap-description-template", "SNMP description template.").Default("description-template.tpl").ExistingFile()
+		snmpTrapSkipBaseBinds       = application.Flag("snmp.trap-skip-base-binds", "Don't include the .1, .2 and .3 OIDs by default, so they can be generated elsewhere.").Default("false").Bool()
 		snmpExtraFieldTemplate      = application.Flag("snmp.extra-field-template", "SNMP extra field templates, eg. --snmp.extra-field-templates=4=new-field.template.tpl to add a 4th field to the trap, with the given template file. You may add several fields using that flag several times.").PlaceHolder("4=extra-field-template.tpl").StringMap()
 		snmpTimeout                 = application.Flag("snmp.timeout", "SNMP timeout duration").Default("5s").Duration()
 
@@ -88,9 +89,11 @@ func ParseConfiguration(args []string) (*SNMPNotifierConfiguration, log.Logger, 
 	extraFieldTemplates := make(map[string]template.Template)
 	if snmpExtraFieldTemplate != nil {
 		for k, v := range *snmpExtraFieldTemplate {
-			i, err := strconv.Atoi(k)
-			if err != nil || i < 4 {
-				return nil, logger, fmt.Errorf("Invalid field ID: %s. Field ID must be a number superior to 3", k)
+			if !*snmpTrapSkipBaseBinds {
+				i, err := strconv.Atoi(k)
+				if err != nil || i < 4 {
+					return nil, logger, fmt.Errorf("Invalid field ID: %s. Field ID must be a number superior to 3", k)
+				}
 			}
 			currentTemplate, err := template.New(filepath.Base(v)).Funcs(template.FuncMap{
 				"groupAlertsByLabel": commons.GroupAlertsByLabel,
@@ -126,6 +129,7 @@ func ParseConfiguration(args []string) (*SNMPNotifierConfiguration, log.Logger, 
 		DescriptionTemplate: *descriptionTemplate,
 		ExtraFieldTemplates: extraFieldTemplates,
 		SNMPTimeout:         *snmpTimeout,
+		SkipBaseBinds:       *snmpTrapSkipBaseBinds,
 	}
 
 	if isV2c {
