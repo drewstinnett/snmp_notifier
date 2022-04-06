@@ -14,6 +14,11 @@
 package trapsender
 
 import (
+	"encoding/hex"
+	"fmt"
+	"net"
+	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -25,6 +30,8 @@ import (
 	"github.com/k-sone/snmpgo"
 	"github.com/shirou/gopsutil/host"
 )
+
+var hexPrefix *regexp.Regexp = regexp.MustCompile(`^0[xX]`)
 
 // TrapSender sends traps according to given alerts
 type TrapSender struct {
@@ -116,12 +123,23 @@ func (trapSender TrapSender) generateVarBinds(alertGroup types.AlertGroup) (snmp
 		varBinds = addStringSubOid(varBinds, alertGroup.OID, "2", alertGroup.Severity)
 		varBinds = addStringSubOid(varBinds, alertGroup.OID, "3", *description)
 	}
-	for subOid, template := range trapSender.configuration.ExtraFieldTemplates {
+	for oidTypeAndsubOid, template := range trapSender.configuration.ExtraFieldTemplates {
+		typeOidSlice := strings.Split(oidTypeAndsubOid, "-")
+
 		value, err := commons.FillTemplate(alertGroup, template)
 		if err != nil {
 			return nil, err
 		}
-		varBinds = addStringSubOid(varBinds, alertGroup.OID, subOid, *value)
+		if len(typeOidSlice) == 1 {
+			subOid := typeOidSlice[0]
+			varBinds = addStringSubOid(varBinds, alertGroup.OID, subOid, *value)
+			fmt.Println(subOid)
+		} else if len(typeOidSlice) == 2 {
+			kind := typeOidSlice[0]
+			subOid := typeOidSlice[1]
+			varBinds, _ = addOidTypeAndSubOid(varBinds, alertGroup.OID, kind, subOid, *value)
+		}
+
 	}
 
 	return varBinds, nil
@@ -136,6 +154,80 @@ func addStringSubOid(varBinds snmpgo.VarBinds, alertOid string, subOid string, v
 	oidString := strings.Join([]string{alertOid, subOid}, ".")
 	oid, _ := snmpgo.NewOid(oidString)
 	return append(varBinds, snmpgo.NewVarBind(oid, snmpgo.NewOctetString([]byte(strings.TrimSpace(value)))))
+}
+
+func addOidTypeAndSubOid(varBinds snmpgo.VarBinds, alertOid string, kind string, subOid string, value string) (ret snmpgo.VarBinds, err error) {
+	oidString := strings.Join([]string{alertOid, subOid}, ".")
+	oid, _ := snmpgo.NewOid(oidString)
+	var val snmpgo.Variable
+	value = strings.TrimSpace(value)
+
+	switch kind {
+	case "i":
+		var num int64
+		fmt.Println(subOid)
+		fmt.Println(kind)
+		fmt.Println(value)
+		if num, err = strconv.ParseInt(value, 10, 32); err == nil {
+			val = snmpgo.NewInteger(int32(num))
+		}
+	case "u":
+		var num uint64
+		if num, err = strconv.ParseUint(value, 10, 32); err == nil {
+			val = snmpgo.NewGauge32(uint32(num))
+		}
+	case "c":
+		var num uint64
+		if num, err = strconv.ParseUint(value, 10, 32); err == nil {
+			val = snmpgo.NewCounter32(uint32(num))
+		}
+	case "C":
+		var num uint64
+		if num, err = strconv.ParseUint(value, 10, 64); err == nil {
+			val = snmpgo.NewCounter64(num)
+		}
+	case "t":
+		var num uint64
+		if num, err = strconv.ParseUint(value, 10, 32); err == nil {
+			val = snmpgo.NewTimeTicks(uint32(num))
+		}
+	case "a":
+		if ip := net.ParseIP(value); ip != nil && len(ip) == 4 {
+			val = snmpgo.NewIpaddress(ip[0], ip[1], ip[2], ip[3])
+		} else {
+			return nil, fmt.Errorf("%s: no valid IP Address", value)
+		}
+	case "o":
+		val, err = snmpgo.NewOid(value)
+	case "n":
+		val = snmpgo.NewNull()
+	case "s":
+		val = snmpgo.NewOctetString([]byte(value))
+	case "x":
+		var b []byte
+		hx := hexPrefix.ReplaceAllString(value, "")
+		if b, err = hex.DecodeString(hx); err == nil {
+			val = snmpgo.NewOctetString(b)
+		} else {
+			return nil, fmt.Errorf("%s: no valid Hex String", value)
+		}
+	case "d":
+		s := strings.Split(value, ".")
+		b := make([]byte, len(s))
+		for i, piece := range s {
+			var num int
+			if num, err = strconv.Atoi(piece); err != nil || num > 0xff {
+				return nil, fmt.Errorf("%s: no valid Decimal String", value)
+			}
+			b[i] = byte(num)
+		}
+		val = snmpgo.NewOctetString(b)
+	default:
+		return nil, fmt.Errorf("%s: unknown TYPE", kind)
+	}
+	fmt.Println(oid)
+	fmt.Println(val)
+	return append(varBinds, snmpgo.NewVarBind(oid, val)), err
 }
 
 func (trapSender TrapSender) connect() (*snmpgo.SNMP, error) {
